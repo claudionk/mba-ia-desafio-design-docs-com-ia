@@ -1,3 +1,130 @@
+# Resolução - Da Reunião ao Documento — Webhooks de Notificação de Pedidos
+
+Pacote de design docs (PRD, RFC, FDD, ADRs e Tracker) da feature **Sistema de Webhooks de Notificação de Pedidos** do OMS, produzido com IA a partir de `TRANSCRICAO.md` e do código deste repositório.
+
+> O enunciado original do desafio está no repositório base: <https://github.com/devfullcycle/mba-ia-desafio-design-docs-com-ia>.
+
+## Sobre o desafio
+
+Uma empresa que opera um Order Management System (Node.js + TypeScript + Prisma/MySQL) decidiu, em uma reunião de ~55 minutos, construir webhooks para avisar clientes B2B quando o status dos pedidos muda. Nada foi registrado além da transcrição. A tarefa foi transformar essa conversa — cheia de decisões, alternativas descartadas, itens adiados e detalhes técnicos soltos — em documentação acionável para o time começar a implementar.
+
+O desafio real não é "escrever documentos", e sim **filtrar e rastrear**: separar o que foi decidido do que foi descartado ou adiado, colocar cada informação na altura certa (produto, arquitetura, decisão, implementação) e garantir que nada foi inventado. Cada item precisa apontar para uma fala `[hh:mm] Nome` ou para um arquivo real do código.
+
+## Ferramentas de IA utilizadas
+
+| Ferramenta | Papel |
+| --- | --- |
+| **Claude Code (modelo Claude Opus 5.5)** | Agente principal no terminal: leu o repositório e a transcrição, cruzou falas com o código, redigiu todos os documentos e fez as revisões críticas. |
+| **Script de validação gerado pela IA (Node.js)** | Checagem automática do Tracker e dos documentos: timestamps `[hh:mm] Nome` existentes na transcrição, caminhos de código existentes, links entre documentos, seções obrigatórias dos ADRs e % de linhas por fonte. |
+
+## Workflow adotado
+
+1. **Contextualização:** leitura integral de `DESAFIO_MBA.md`, `TRANSCRICAO.md` e do código relevante (`src/modules/orders/*`, `src/shared/errors/*`, `src/middlewares/*`, `src/app.ts`, `src/server.ts`, `src/config/*`, `prisma/schema.prisma`, `package.json`, `tests/*`).
+2. **Filtragem da transcrição** em quatro baldes: *decidido*, *descartado*, *adiado/em aberto* e *detalhe secundário*. Cada item ficou com o timestamp e o falante.
+3. **ADRs primeiro** (ADR-001 a ADR-007): as 6 decisões principais e mais uma secundária (payload/snapshot/filtro), que afeta o modelo de dados.
+4. **RFC** sobre os ADRs: proposta em nível de arquitetura, alternativas com trade-off e questões em aberto — separando as levantadas **na reunião** das encontradas **na revisão do desenho**.
+5. **FDD**: modelo de dados, fluxos, 7 endpoints com request/response, contrato outbound, matriz `WEBHOOK_*`, observabilidade e a seção "Integração com o sistema existente", com 19 arquivos reais.
+6. **PRD** por último entre os grandes, consolidando problema, escopo, métricas e riscos sem repetir detalhe técnico.
+7. **Revisão crítica contra o código**, procurando contradições entre o que a reunião disse e o que o código permite (ver *Iterações*).
+8. **Tracker + validação automática**, em loop até zerar os problemas e atingir a cobertura.
+9. **README** com o processo.
+
+Princípio aplicado em todos os documentos: **cada documento responde a uma pergunta**. O PRD não tem tabelas de banco; o RFC não tem payloads; o FDD não rediscute alternativas (aponta para os ADRs).
+
+## Prompts customizados
+
+**1. Kickoff — usado literalmente para iniciar a sessão** (os critérios de aceite do enunciado foram colados como objetivo do loop):
+
+```text
+Baseado no DESAFIO_MBA.md e na TRANSCRICAO.md execute todas as fases do desafio conforme solicitado.
+Tenha como /goal estes criterios de aceite /loop destas tasks
+<critérios de aceite do enunciado colados aqui>
+```
+
+**2. Filtragem dirigida da transcrição** (etapa 2 do workflow):
+
+```text
+Leia TRANSCRICAO.md linha a linha e classifique cada fala relevante em exatamente um balde:
+- DECIDIDO: alguém propõe e o grupo fecha ("decidido", "anotado", "tá fechado").
+- DESCARTADO: alternativa colocada na mesa e rejeitada — registre o trade-off dito na reunião.
+- ADIADO/EM ABERTO: "próxima fase", "observar", "problema do futuro", "mais pra frente".
+- DETALHE SECUNDÁRIO: timeout, headers, formato de payload, limites — vai para FDD/RNF, não para ADR.
+Para cada item devolva: [hh:mm] Nome | balde | resumo de 1 linha.
+Proibido: promover item ADIADO ou DESCARTADO a requisito; inferir números que não foram ditos.
+```
+
+**3. Revisão crítica contra o código** (etapa 7):
+
+```text
+Para cada decisão dos ADRs e cada contrato do FDD, abra o arquivo do código que ela toca e responda:
+(a) o código atual permite isso como descrito? (ex.: que código de erro o validate.middleware realmente devolve?)
+(b) a decisão gera alguma consequência que a reunião não percebeu? (ordem, rollback, janela de rotação)
+(c) algum arquivo citado não existe? Se for arquivo novo, marque *(novo)*.
+Não resolva lacunas inventando decisão: registre como questão em aberto no RFC, com dono sugerido,
+e no FDD use "padrão provisório — a validar".
+```
+
+**4. Gate do Tracker** (etapa 8):
+
+```text
+Monte docs/TRACKER.md com uma linha por requisito, decisão, alternativa, questão, risco, contrato,
+erro, critério e ponto de integração dos documentos. Localização: "[hh:mm] Nome" exatamente como na
+transcrição, ou caminho de arquivo existente. Depois rode o script de validação e corrija até:
+0 timestamps inválidos, 0 caminhos inexistentes, ≥ 70% TRANSCRICAO, ≥ 5 CODIGO.
+Se um item não tiver fonte, remova-o do documento em vez de inventar a fonte.
+```
+
+## Iterações e ajustes
+
+Foram **5 ciclos principais** (contexto + ADRs → RFC/FDD/PRD → revisão crítica contra o código → validação automática do Tracker → revisão de cobertura por participante). Os ajustes concretos mais relevantes:
+
+1. **Código de erro de URL inválida.** A primeira versão da matriz retornava `400 WEBHOOK_INVALID_URL` no topo do envelope. Lendo `src/middlewares/validate.middleware.ts`, todo `ZodError` vira `ValidationError` com código `VALIDATION_ERROR`, e a Sofia pediu que o `https` fosse validado no schema Zod ([09:23]). A matriz foi corrigida: `error.code = VALIDATION_ERROR`, com `WEBHOOK_INVALID_URL` em `details` — e a limitação foi registrada como consequência negativa no ADR-006.
+2. **`WEBHOOK_NOT_FOUND` com `NotFoundError`.** O rascunho reaproveitava `NotFoundError`, mas em `src/shared/errors/http-errors.ts` o código dessa classe é fixo (`NOT_FOUND`). Ajustado para uma subclasse própria de `AppError`.
+3. **Limite de 64 KB no lugar errado.** A versão inicial validava o tamanho ao inserir na outbox. Isso lançaria erro dentro da transação do `changeStatus` e **desfaria a mudança de status** — exatamente o que Bruno disse ser inaceitável ([09:04]). A verificação foi movida para o worker, que manda o evento direto para a DLQ.
+4. **Contradições latentes da própria reunião, viradas questões em aberto em vez de decisões inventadas:** "5 tentativas" × 5 intervalos somando ~15 h (Q-06); rotação com "antiga válida por 24 h" sem definir como assinar durante a janela (Q-07); ordem por pedido que se quebra quando um evento entra em retry (Q-09).
+5. **Filtro de eventos com `PENDING`.** `src/modules/orders/order.status.ts` mostra que nenhuma transição leva a `PENDING`; o schema de `events` passou a excluir esse valor.
+6. **Arquivos inexistentes.** O script apontou `src/worker.ts`, `webhook.processor.ts`, `webhook.constants.ts` e outros arquivos citados sem marcação. Todos são arquivos a criar e passaram a levar *(novo)* em todos os documentos.
+7. **Cobertura do Tracker.** A primeira versão cobria bem requisitos e decisões, mas deixava de fora critérios de aceite, vários códigos de erro e estratégias de resiliência. Foram adicionadas 45 linhas; o resultado final tem 275 linhas, 82,5% `TRANSCRICAO` e 48 `CODIGO`, sem nenhum timestamp ou caminho inválido.
+9. **Crédito aos participantes.** Na revisão humana, notei que contribuições de Sofia e Marcos estavam sub-representadas. Os documentos citavam quem *definiu* cada valor, mas não quem *levantou* a questão: Sofia perguntou o escopo outbound ([09:02]) e o timeout ([09:42]); Marcos validou os 2 s ([09:10]) e levantou payload e headers ([09:43]–[09:44]). Um script listou as falas da transcrição ainda sem citação. As substantivas ganharam linha no Tracker (agora 299 linhas, 83,9% `TRANSCRICAO`), e os decisores dos ADR-002, 004, 006 e 007 passaram a incluir Sofia/Marcos onde eles de fato contribuíram.
+8. **Escopo negativo.** E-mail de alerta, dashboard, rate limiting, arquivamento, múltiplos workers e exactly-once aparecem **só** em "Fora de escopo" / "Questões em aberto", nunca como requisito.
+
+## Como navegar a entrega
+
+Ordem de leitura sugerida:
+
+| # | Arquivo | Para quê |
+| --- | --- | --- |
+| 1 | [`docs/PRD.md`](docs/PRD.md) | Por que e o quê: problema, público, métricas, escopo, requisitos, riscos |
+| 2 | [`docs/RFC.md`](docs/RFC.md) | Proposta técnica, alternativas descartadas e questões em aberto |
+| 3 | [`docs/adrs/`](docs/adrs/README.md) | Uma decisão por arquivo (ADR-001 a ADR-007) |
+| 4 | [`docs/FDD.md`](docs/FDD.md) | Como construir: dados, fluxos, contratos, erros, observabilidade, integração com o código |
+| 5 | [`docs/TRACKER.md`](docs/TRACKER.md) | De onde veio cada item (transcrição ou código) |
+
+```
+.
+├── README.md                 ← este arquivo (processo)
+├── TRANSCRICAO.md            ← fonte (inalterada)
+└── docs/
+    ├── PRD.md
+    ├── RFC.md
+    ├── FDD.md
+    ├── TRACKER.md
+    └── adrs/
+        ├── README.md                                         (índice)
+        ├── ADR-001-outbox-no-mysql.md
+        ├── ADR-002-worker-separado-em-polling.md
+        ├── ADR-003-retry-com-backoff-exponencial-e-dlq.md
+        ├── ADR-004-assinatura-hmac-sha256-com-secret-por-endpoint.md
+        ├── ADR-005-entrega-at-least-once-com-x-event-id.md
+        ├── ADR-006-reuso-dos-padroes-existentes-do-projeto.md
+        └── ADR-007-payload-enxuto-com-snapshot-na-insercao.md
+```
+
+O código da aplicação (`src/`, `prisma/`, `tests/` e configurações) **não foi alterado**: a entrega é só documental.
+
+
+---
+
 # Da Reunião ao Documento: Design Docs Gerados por IA
 
 ## Descrição
